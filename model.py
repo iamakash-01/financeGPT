@@ -137,7 +137,7 @@ while True:
         continue
 
     if user_choice == 4:
-        print('Thank you for using the Magical Financial Assistant...Have a nice day.')
+        print('Thank you for using the FinanceGPT...Have a nice day.')
         break
 
     if user_choice == 1:
