@@ -127,7 +127,7 @@ while True:
         exit(1)
 
     if user_input == 'exit' or user_input == '3':
-        print('Thank you for using the Magical Financial Assistant...Have a nice day.')
+        print('Thank you for using the FinanceGPT...Have a nice day.')
         break
 
     try:
