@@ -1,5 +1,5 @@
 import os
-import json
+import sqlite3
 from datetime import datetime
 from dotenv import load_dotenv
 from agno.agent import Agent
@@ -9,156 +9,212 @@ from agno.models.groq import Groq
 load_dotenv()
 groq_api_key = os.getenv('GROQ_API_KEY')
 
-# expense, bills and debts file
-expense_file = 'expenses.json'
-budget_file = 'budget.json'
-bills_file = 'bills.json'
-debt_file = 'debt.json'
+# connect to database
+db_file = 'finance.db'
+def connect_db():
+    return sqlite3.connect(db_file)
 
-# ----------------------------------------load files------------------------------------------------
-def load_data(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, "r") as file:
-            return json.load(file)
-    return []
+#----------------------------------------Database Operations----------------------------------------------
+def create_tables():
+    conn = connect_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''CREATE TABLE IF NOT EXISTS expenses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    amount REAL,
+                    category TEXT,
+                    description TEXT,
+                    date TEXT)''')
 
-def save_data(data, file_path):
-    try:
-        with open(file_path, "w") as file:
-            json.dump(data, file, indent = 4)
-    except IOError :
-        print(f'Error saving the file {file_path}. Please try again.')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS budget (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monthly_budget REAL)''')
+
+    conn.commit()
+    conn.close()
 
 # ----------------------------------------Expense functions-------------------------------------------
 def add_expense(amount, category, description = ""):
-    expenses = load_data(expense_file)
-    expense = {
-        "amount": float(amount),
-        "category": category,
-        "description": description,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    expenses.append(expense)
-    save_data(expenses, expense_file)
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute("INSERT INTO expenses (amount, category, description, date) VALUES (?, ?, ?, ?)",
+                   (amount, category, description, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+
+    conn.commit()
+    conn.close()
     return f"\nAdded: ${amount} in {category} - {description}"
 
 def show_expenses():
-    expenses = load_data(expense_file)
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM expenses")
+    expenses = cursor.fetchall()
+    conn.close()
+
     if not expenses:
         return "No expenses recorded yet."
 
+    response = "\nExpense History:\n" + "-" * 40 + "\n"
     total = 0
-    response = "\n Expense History: \n" + "-" * 40 + "\n"
     for exp in expenses:
-        response += f"{exp['date']} | ${exp['amount']} | {exp['category']} | {exp['description']}\n"
-        total += exp["amount"]
-    response += "-" * 40 + f"\n Total Spent: ${total}"
+        response += f"{exp[4]} | ${exp[1]} | {exp[2]} | {exp[3]}\n"
+        total += exp[1]
+
+    response += "-" * 40 + f"\nTotal Spent: ${total}"
     return response
-
 def show_category_summary():
-    expenses = load_data(expense_file)
-    category_totals = {}
+    conn = connect_db()
+    cursor = conn.cursor()
 
-    for exp in expenses:
-        category_totals[exp["category"]] = category_totals.get(exp["category"], 0) + exp["amount"]
+    cursor.execute("SELECT category, SUM(amount) FROM expenses GROUP BY category")
+    category_totals = cursor.fetchall()
+
+    conn.close()
 
     if not category_totals:
         return "No expenses recorded yet."
 
-    response = "\n Category-wise Breakdown: \n"
-    for category, total in category_totals.items():
-        response += f" ~ {category}: ${total}\n"
-    
+    response = "\nCategory-wise Breakdown:\n"
+    for category, total in category_totals:
+        response += f"~ {category}: ${total:.2f}\n"
+
     return response
 
 # --------------------------------------Budget function------------------------------------------------
 def set_budget(amount):
-    save_data({'monthly budget': float(amount)}, budget_file)
-    print(f'Budget set to ${amount: .2f} per month')
+    conn = connect_db()
+    cursor = conn.cursor()
 
+    cursor.execute("DELETE FROM budget")  # Ensure only one budget exists
+    cursor.execute("INSERT INTO budget (monthly_budget) VALUES (?)", (amount,))
+    
+    conn.commit()
+    conn.close()
+    print(f"Budget set to ${amount:.2f} per month.")
 def get_budget():
-    budget_data = load_data(budget_file)
-    return budget_data.get("monthly_budget", 0) if budget_data else 0
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT monthly_budget FROM budget")
+    result = cursor.fetchone()
+
+    conn.close()
+
+    return result[0] if result else 0
 
 def check_budget():
-    budget = get_budget()
-    if budget == 0:
-        return "No budget set. Use 'Set Budget' option."
+    conn = connect_db()
+    cursor = conn.cursor()
 
-    expenses = load_data(expense_file)
-    total_spent = sum(exp["amount"] for exp in expenses)
+    cursor.execute("SELECT monthly_budget FROM budget")
+    result = cursor.fetchone()
+
+    if not result:
+        return "No budget set. Use the 'Set Budget' option."
+
+    budget = result[0]
     
+    cursor.execute("SELECT SUM(amount) FROM expenses")
+    total_spent = cursor.fetchone()[0] or 0
+
+    conn.close()
+
     response = f"\nBudget Overview:\nBudget: ${budget:.2f}\nSpent: ${total_spent:.2f}\n"
+
     if total_spent > budget:
         response += "Warning: You have exceeded your budget!"
     else:
         remaining = budget - total_spent
         response += f"You have ${remaining:.2f} left this month."
-    
+
     return response
+
 # -----------------------------------------Spending fuctions------------------------------------------
 def spending_insights():
-    expenses = load_data(expense_file)
-    if not expenses:
-        return "No expenses recorded yet."
+    conn = connect_db()
+    cursor = conn.cursor()
 
-    total_spent = sum(exp["amount"] for exp in expenses)
-    category_totals = {}
-    for exp in expenses:
-        category_totals[exp["category"]] = category_totals.get(exp["category"], 0) + exp["amount"]
+    cursor.execute("SELECT category, SUM(amount) FROM expenses GROUP BY category")
+    category_totals = cursor.fetchall()
+
+    cursor.execute("SELECT SUM(amount) FROM expenses")
+    total_spent = cursor.fetchone()[0] or 0
+
+    conn.close()
+
+    if not category_totals:
+        return "No expenses recorded yet."
 
     finance_agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        description="You are an AI finance assistant analyzing spending patterns.",
+        description="You analyze spending data and provide financial advice.",
         markdown=True
     )
 
     prompt = f"""
-    Analyze user spending data:
-    - Total spent: ${total_spent:.2f}
-    - Category breakdown: {category_totals}
-    Provide money-saving advice.
+    User's total spending: ${total_spent:.2f}
+    Category breakdown: {dict(category_totals)}
+
+    Suggest money-saving strategies and budget improvements.
     """
 
-    print("\nAI Spending Insights:\n")
+    print("\n AI-Powered Spending Insights:\n")
     finance_agent.print_response(prompt, stream=True)
 
 def detect_spending_pattern():
-    expenses = load_data(expense_file)
-    if len(expenses) < 5:
-        return "Not enough data to detect spending patterns."
+    conn = connect_db()
+    cursor = conn.cursor()
 
-    last_expenses = expenses[-5:]
-    total_last_5 = sum(exp["amount"] for exp in last_expenses)
-    avg_spending = total_last_5 / 5
-    threshold = avg_spending * 1.5
+    # Get total spending for the last 7 days
+    cursor.execute("""
+        SELECT SUM(amount) FROM expenses
+        WHERE date >= date('now', '-7 days')
+    """)
+    last_week_spending = cursor.fetchone()[0] or 0
 
-    last_expense = expenses[-1]
-    is_unusual = last_expense["amount"] > threshold
+    # Get total spending for the previous 7 days (8-14 days ago)
+    cursor.execute("""
+        SELECT SUM(amount) FROM expenses
+        WHERE date >= date('now', '-14 days') AND date < date('now', '-7 days')
+    """)
+    prev_week_spending = cursor.fetchone()[0] or 0
 
-    # AI-powered analysis
+    conn.close()
+
+    # Check if there’s enough data
+    if last_week_spending == 0 and prev_week_spending == 0:
+        return "Not enough data to detect weekly spending patterns."
+
+    # Calculate the percentage change in spending
+    if prev_week_spending == 0:
+        change_percent = 100  # If no previous spending, assume full increase
+    else:
+        change_percent = ((last_week_spending - prev_week_spending) / prev_week_spending) * 100
+
+    # AI-powered spending insights
     finance_agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        description="You analyze spending patterns and detect unusual trends.",
+        description="You analyze weekly spending patterns and detect trends.",
         markdown=True
     )
 
     prompt = f"""
-    The user has made the following recent expenses:
-    {json.dumps(last_expenses, indent=4)}
-    
-    - Average recent spending: ${avg_spending:.2f}
-    - Last recorded expense: ${last_expense['amount']:.2f}
-    
-    Detect if this is unusual compared to their past spending trends.  
-    If it's unusually high, provide a **friendly warning**.  
-    If it's normal, offer **budgeting tips** based on their spending.  
+    User's weekly spending data:
+    - Last 7 days: ${last_week_spending:.2f}
+    - Previous 7 days: ${prev_week_spending:.2f}
+    - Percentage change: {change_percent:.2f}%
+
+    Analyze whether the user is overspending or saving compared to the previous week.
+    Provide personalized advice to improve financial habits.
     """
 
-    print("\nAI-Powered Spending Pattern Analysis:\n")
+    print("\nAI-Powered Weekly Spending Pattern Analysis:\n")
     finance_agent.print_response(prompt, stream=True)
 
 # ------------------------------------------Main loop--------------------------------------------------
+create_tables()
 while True:
     # some basic prompts
     print('Welcome to the FinanceGPT \n')
@@ -245,7 +301,7 @@ while True:
             else:
                 print("Invalid choice. Please enter a number between 1 and 6.")
     elif user_input == '3':
-        print(spending_insights())
+        spending_insights()
 
     elif user_input == '4':
         print(detect_spending_pattern())

@@ -40,5 +40,17 @@
         "category": "bills",
         "description": "electricity bill",
         "date": "2025-03-02 11:58:17"
+    },
+    {
+        "amount": 60.0,
+        "category": "food",
+        "description": "Paneer butter Masala",
+        "date": "2025-03-03 09:50:15"
+    },
+    {
+        "amount": 100.0,
+        "category": "travel",
+        "description": "guwahati to tamil nadu",
+        "date": "2025-03-03 12:21:09"
     }
 ]
